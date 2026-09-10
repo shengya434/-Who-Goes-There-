@@ -30,8 +30,14 @@ import org.lwjgl.glfw.GLFW;
  * 仅客户端：「谁在那！」结果面板。
  *
  * <p>上面一个搜索框，下面一个可滚动列表。搜索框支持 {@code @} 语法筛选模组
- * （{@code @apo} / {@code @apo 僵尸}），正在输入 {@code @} 词时下方会浮出候选模组，
- * 点击或按 Tab 即可补全。</p>
+ * （{@code @apo} / {@code @apo 僵尸}），正在输入 {@code @} 词时下方会浮出候选模组
+ * （完全不透明底 + 整块高亮，超出可见行数可滚动）。</p>
+ *
+ * <p>键盘：搜索框始终持有焦点，所以 {@code ↑/↓/Enter/Tab} 都在 {@link SearchBox#keyPressed}
+ * 里自己吃掉 ——<br>
+ * 浮层打开时 {@code ↑/↓} 在候选间循环移动高亮、{@code Enter} 补全高亮项；<br>
+ * 浮层关闭时 {@code ↑/↓} 在结果列表里移动选中行（自动滚到可见）、{@code Enter} 确认选中行
+ * （等价于鼠标点它）；{@code Tab} 任何时候都是「补全第一个候选」的快捷方式。</p>
  *
  * <p>点某一行就请服务端给它打发光标记，关掉界面并在聊天栏里报出它的坐标——
  * 那条消息本身还能点：点主体把 {@code /tp} 填进聊天栏，点 {@code [直接传送]} 直接执行。</p>
@@ -44,15 +50,29 @@ public class ScanScreen extends Screen {
     private static final int COLOR_TEXT_HOVER = 0xFFFFE08A;
     private static final int COLOR_DIM = 0xFFA0A0A0;
     private static final int COLOR_ACCENT = 0xFF8CC8FF;
+    /** 键盘/鼠标选中的结果行：整块强调色底 + 亮字，明显区别于普通行。 */
+    private static final int COLOR_ROW_SELECT_BORDER = 0xFF8CC8FF;
+    private static final int COLOR_ROW_SELECT_BG = 0xFF1B3350;
+    private static final int COLOR_TEXT_SELECTED = 0xFFFFFFFF;
 
     /** 补全浮层最多列几个候选。 */
-    private static final int MAX_COMPLETIONS = 8;
+    private static final int MAX_COMPLETIONS = 12;
     /** 补全浮层每行高度（比结果行紧凑）。 */
     private static final int COMPLETION_ROW_HEIGHT = 12;
-    /** 浮层配色，参照原版 tooltip 的深底 + 亮边。 */
-    private static final int COLOR_POPUP_BG = 0xF0100010;
-    private static final int COLOR_POPUP_BORDER = 0xFF5050FF;
-    private static final int COLOR_POPUP_HOVER = 0x50FFFFFF;
+    /** 浮层一次最多显示几行，超出就滚动（高亮行会跟着滚进可见区）。 */
+    private static final int COMPLETION_VISIBLE_ROWS = 6;
+    /**
+     * 浮层配色：一律 alpha = 0xFF 的纯色底 —— 不用 tooltip 那种半透明/渐变模糊底，
+     * 实机看着才不糊。统一深底 + 亮字；选中行画整块高亮，而不是只换文字颜色。
+     */
+    private static final int COLOR_POPUP_BG = 0xFF0E1220;
+    private static final int COLOR_POPUP_BORDER = 0xFF8CC8FF;
+    private static final int COLOR_POPUP_SELECT = 0xFF2D5C93;
+    private static final int COLOR_POPUP_HOVER = 0xFF22344F;
+    private static final int COLOR_POPUP_TEXT = 0xFFE8E8E8;
+    private static final int COLOR_POPUP_TEXT_ON = 0xFFFFFFFF;
+    private static final int COLOR_POPUP_NS = 0xFF9FD4FF;
+    private static final int COLOR_POPUP_TRACK = 0xFF2A2A2A;
 
     /** 模组显示名缓存：setEntries 之后每帧都会画行，别每帧去翻 ModList。 */
     private static final Map<String, String> MOD_NAME_CACHE = new HashMap<>();
@@ -77,6 +97,10 @@ public class ScanScreen extends Screen {
     private int completionWordEnd;
     /** 排好序的候选（最多 {@value #MAX_COMPLETIONS} 个）。 */
     private final List<Candidate> completions = new ArrayList<>();
+    /** 浮层里当前高亮的候选下标：浮层打开时 ↑/↓ 改它，Enter 补全它。 */
+    private int completionHighlight;
+    /** 浮层滚动偏移：可见窗口的第一行对应第几个候选。 */
+    private int completionScroll;
     /** 缓存键「光标 + 文本」：文本/光标没变就不重算，省得每帧扫一遍名单。 */
     private String completionKey;
 
@@ -336,6 +360,9 @@ public class ScanScreen extends Screen {
             this.completionWord = word;
             this.completionWordStart = start;
             this.completionWordEnd = end;
+            // 候选集跟着文本变了 —— 高亮和滚动都回到开头
+            this.completionHighlight = 0;
+            this.completionScroll = 0;
         }
     }
 
@@ -355,8 +382,35 @@ public class ScanScreen extends Screen {
         this.searchBox.setHighlightPos(this.searchBox.getCursorPosition());
 
         this.completions.clear();
+        this.completionHighlight = 0;
+        this.completionScroll = 0;
         this.completionWord = null;
         this.completionKey = null;
+    }
+
+    /** ↑/↓：在候选之间循环移动高亮（到顶再按 ↑ 回到最后一个），并让高亮行滚进可见窗口。 */
+    private void moveCompletion(int delta) {
+        int size = this.completions.size();
+        if (size == 0) {
+            return;
+        }
+        int next = (this.completionHighlight + delta) % size;
+        if (next < 0) {
+            next += size;
+        }
+        this.completionHighlight = next;
+
+        int visibleRows = Math.min(COMPLETION_VISIBLE_ROWS, size);
+        if (next < this.completionScroll) {
+            this.completionScroll = next;
+        } else if (next >= this.completionScroll + visibleRows) {
+            this.completionScroll = next - visibleRows + 1;
+        }
+    }
+
+    /** Enter：补全当前高亮的候选（等价于鼠标点它）。 */
+    private void acceptHighlightedCompletion() {
+        this.acceptCompletion(this.completionHighlight);
     }
 
     /** Tab：补全到第一个候选；没有候选就当作没按过，让按键继续往下走。 */
@@ -383,30 +437,58 @@ public class ScanScreen extends Screen {
         int x = this.searchBox.getX();
         int y = this.searchBox.getY() + this.searchBox.getHeight();
         int width = this.searchBox.getWidth();
-        int height = this.completions.size() * COMPLETION_ROW_HEIGHT + 4;
+        int visibleRows = Math.min(COMPLETION_VISIBLE_ROWS, this.completions.size());
+        int height = visibleRows * COMPLETION_ROW_HEIGHT + 4;
+        boolean scrollbar = this.completions.size() > visibleRows;
+        // 有滚动条时给右侧让出 4px，别让命名空间文字压上去
+        int rightMargin = scrollbar ? 7 : 3;
 
-        // 画在列表之上：super.render 已经把列表画完了，这里是最后一层
+        // 画在列表之上：super.render 已经把列表画完了，这里是最后一层。
+        // 底和边都是 alpha=0xFF 的纯色 —— 完全不透明，不再糊。
         graphics.fill(x - 1, y - 1, x + width + 1, y + height + 1, COLOR_POPUP_BORDER);
         graphics.fill(x, y, x + width, y + height, COLOR_POPUP_BG);
 
-        for (int i = 0; i < this.completions.size(); i++) {
-            Candidate candidate = this.completions.get(i);
+        for (int i = 0; i < visibleRows; i++) {
+            int index = this.completionScroll + i;
+            if (index >= this.completions.size()) {
+                break;
+            }
+            Candidate candidate = this.completions.get(index);
             int rowTop = y + 2 + i * COMPLETION_ROW_HEIGHT;
+            boolean selected = index == this.completionHighlight;
             boolean hovered = isOverCompletion(mouseX, mouseY, i);
+            int rowRight = x + width - 1 - (scrollbar ? 4 : 0);
 
-            if (hovered) {
-                graphics.fill(x + 1, rowTop, x + width - 1, rowTop + COMPLETION_ROW_HEIGHT, COLOR_POPUP_HOVER);
+            // 高亮是整块底色（不是只改文字色）；选中 > 悬停
+            if (selected) {
+                graphics.fill(x + 1, rowTop, rowRight, rowTop + COMPLETION_ROW_HEIGHT, COLOR_POPUP_SELECT);
+            } else if (hovered) {
+                graphics.fill(x + 1, rowTop, rowRight, rowTop + COMPLETION_ROW_HEIGHT, COLOR_POPUP_HOVER);
             }
 
             // 左：显示名 (条数)；右：命名空间 —— 一律是英文短名，不会撑爆
             Component label = Component.translatable("gui.whogoesthere.completion.entry",
                     candidate.displayName(), candidate.count());
             graphics.drawString(this.font, label, x + 3, rowTop + 2,
-                    hovered ? COLOR_TEXT_HOVER : COLOR_TEXT);
+                    (selected || hovered) ? COLOR_POPUP_TEXT_ON : COLOR_POPUP_TEXT);
             if (!candidate.namespace().equals(candidate.displayName())) {
                 Component ns = Component.literal(candidate.namespace());
-                graphics.drawString(this.font, ns, x + width - this.font.width(ns) - 3, rowTop + 2, COLOR_ACCENT);
+                graphics.drawString(this.font, ns, x + width - rightMargin - this.font.width(ns), rowTop + 2,
+                        COLOR_POPUP_NS);
             }
+        }
+
+        // 候选多于可见行数时，右侧画一根细滚动条 —— 看得到自己滚到哪了
+        if (scrollbar) {
+            int trackTop = y + 2;
+            int trackBottom = y + height - 2;
+            int trackHeight = trackBottom - trackTop;
+            int barX = x + width - 3;
+            graphics.fill(barX, trackTop, barX + 2, trackBottom, COLOR_POPUP_TRACK);
+            int thumbHeight = Math.max(6, trackHeight * visibleRows / this.completions.size());
+            int maxScroll = this.completions.size() - visibleRows;
+            int thumbTop = trackTop + (trackHeight - thumbHeight) * this.completionScroll / Math.max(1, maxScroll);
+            graphics.fill(barX, thumbTop, barX + 2, thumbTop + thumbHeight, COLOR_POPUP_BORDER);
         }
     }
 
@@ -428,6 +510,52 @@ public class ScanScreen extends Screen {
 
         @Override
         public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+            // 搜索框始终持有焦点，所以 ↑/↓/Enter/Tab 都得在这里自己消化并 return true，
+            // 否则会漏给 Screen 去做焦点切换 / 列表滚动。
+            ScanScreen.this.refreshCompletions();
+
+            if (!ScanScreen.this.completions.isEmpty()) {
+                // 浮层打开：↑/↓ 在候选项之间走（循环），Enter 补全高亮的那一项
+                switch (keyCode) {
+                    case GLFW.GLFW_KEY_UP -> {
+                        ScanScreen.this.moveCompletion(-1);
+                        return true;
+                    }
+                    case GLFW.GLFW_KEY_DOWN -> {
+                        ScanScreen.this.moveCompletion(1);
+                        return true;
+                    }
+                    case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> {
+                        ScanScreen.this.acceptHighlightedCompletion();
+                        return true;
+                    }
+                    default -> {
+                    }
+                }
+            } else {
+                // 浮层关闭：↑/↓ 在结果列表里走，Enter 确认选中行
+                switch (keyCode) {
+                    case GLFW.GLFW_KEY_UP -> {
+                        if (ScanScreen.this.resultList.moveSelection(-1)) {
+                            return true;
+                        }
+                    }
+                    case GLFW.GLFW_KEY_DOWN -> {
+                        if (ScanScreen.this.resultList.moveSelection(1)) {
+                            return true;
+                        }
+                    }
+                    case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> {
+                        if (ScanScreen.this.resultList.confirmSelection()) {
+                            return true;
+                        }
+                    }
+                    default -> {
+                    }
+                }
+            }
+
+            // Tab：补全到第一个候选（保留的快捷方式）
             if (keyCode == GLFW.GLFW_KEY_TAB && this.isActive() && this.isFocused()
                     && ScanScreen.this.acceptFirstCompletion()) {
                 return true;
@@ -471,11 +599,12 @@ public class ScanScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        // 浮层优先吃掉点击，别让它穿到下面的列表里
+        // 浮层优先吃掉点击，别让它穿到下面的列表里（点击只认可见窗口内的行）
         if (button == 0) {
-            for (int i = 0; i < this.completions.size(); i++) {
+            int visibleRows = Math.min(COMPLETION_VISIBLE_ROWS, this.completions.size());
+            for (int i = 0; i < visibleRows; i++) {
                 if (isOverCompletion(mouseX, mouseY, i)) {
-                    this.acceptCompletion(i);
+                    this.acceptCompletion(this.completionScroll + i);
                     return true;
                 }
             }
@@ -550,6 +679,42 @@ public class ScanScreen extends Screen {
         protected int getScrollbarPosition() {
             return this.getX() + this.width - 6;
         }
+
+        /** 键盘移动选中行，并自动滚到可见；列表为空返回 false（让按键继续往下走）。 */
+        boolean moveSelection(int delta) {
+            List<Row> rows = this.children();
+            if (rows.isEmpty()) {
+                return false;
+            }
+            int index = this.getSelected() == null ? -1 : rows.indexOf(this.getSelected());
+            int next = index < 0
+                    ? (delta > 0 ? 0 : rows.size() - 1)
+                    : Math.max(0, Math.min(rows.size() - 1, index + delta));
+            Row row = rows.get(next);
+            this.setSelected(row);
+            this.ensureVisible(row);
+            return true;
+        }
+
+        /** Enter：等价于鼠标点中选中的那一行（发光 + 坐标消息 + 关屏）；没选中返回 false。 */
+        boolean confirmSelection() {
+            Row row = this.getSelected();
+            if (row == null) {
+                return false;
+            }
+            ScanScreen.this.onPick(row.entry);
+            return true;
+        }
+
+        @Override
+        protected void renderSelection(GuiGraphics graphics, int top, int width, int height,
+                                       int outerColor, int innerColor) {
+            // 用强调色块标出选中的那行 —— 比原版灰框明显得多，键盘操作才看得见
+            int left = this.getX() + (this.width - width) / 2;
+            int right = this.getX() + (this.width + width) / 2;
+            graphics.fill(left, top - 2, right, top + height + 2, COLOR_ROW_SELECT_BORDER);
+            graphics.fill(left + 1, top - 1, right - 1, top + height + 1, COLOR_ROW_SELECT_BG);
+        }
     }
 
     /**
@@ -575,7 +740,9 @@ public class ScanScreen extends Screen {
         @Override
         public void render(GuiGraphics graphics, int index, int top, int left, int width, int height,
                            int mouseX, int mouseY, boolean hovered, float partialTick) {
-            int nameColor = hovered ? COLOR_TEXT_HOVER : COLOR_TEXT;
+            // 键盘/鼠标选中的那一行也换个亮色文字，跟底色块配合
+            boolean selected = ScanScreen.this.resultList.getSelected() == this;
+            int nameColor = selected ? COLOR_TEXT_SELECTED : (hovered ? COLOR_TEXT_HOVER : COLOR_TEXT);
             int textLeft = left + 4;
 
             // 掉落物：先画 16×16 图标，文字往后让一格

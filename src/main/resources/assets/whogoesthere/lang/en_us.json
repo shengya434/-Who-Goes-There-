@@ -6,7 +6,7 @@
 
   "gui.whogoesthere.title": "Who Goes There?",
   "gui.whogoesthere.search": "Search",
-  "gui.whogoesthere.search.hint": "Name or @mod (Tab to complete)",
+  "gui.whogoesthere.search.hint": "Name or @mod (↑↓ select · Enter confirm)",
   "gui.whogoesthere.completion.entry": "%s (%s)",
   "gui.whogoesthere.row.detail": "dist %s  ·  %s",
   "gui.whogoesthere.row.count": "%s ×%s",
