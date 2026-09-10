@@ -54,6 +54,8 @@ public class ScanScreen extends Screen {
     private static final int COLOR_ROW_SELECT_BORDER = 0xFF8CC8FF;
     private static final int COLOR_ROW_SELECT_BG = 0xFF1B3350;
     private static final int COLOR_TEXT_SELECTED = 0xFFFFFFFF;
+    /** 置顶条目（盖了章的）名字用金色，一眼就能看出它是「永置顶」那一群。 */
+    private static final int COLOR_PINNED = 0xFFFFD24A;
 
     /** 补全浮层最多列几个候选。 */
     private static final int MAX_COMPLETIONS = 12;
@@ -661,14 +663,25 @@ public class ScanScreen extends Screen {
 
     private void onPick(EntityInfo entry) {
         Minecraft minecraft = this.minecraft;
-        PacketDistributor.sendToServer(new HighlightRequestPayload(entry.entityId()));
+        if (entry.isPinned() && entry.uuid() != null) {
+            // 置顶条目可能跑到别的维度去了，得靠 UUID + 维度定位
+            PacketDistributor.sendToServer(HighlightRequestPayload.ofUuid(entry.uuid(), entry.dimension()));
+        } else {
+            PacketDistributor.sendToServer(HighlightRequestPayload.ofEntity(entry.entityId()));
+        }
         this.onClose();
         if (minecraft.player == null) {
             return;
         }
 
-        // 坐标留 1 位小数，直接就是一条合法的 /tp 指令
-        String command = String.format(Locale.ROOT, "/tp @s %.1f %.1f %.1f", entry.x(), entry.y(), entry.z());
+        // 同维度直接 /tp；异维度（置顶条目可能跨维度）得先用 execute in 切过去。
+        // 坐标留 1 位小数，直接就是一条合法指令。
+        ResourceLocation myDimension = minecraft.level == null ? null : minecraft.level.dimension().location();
+        boolean sameDimension = myDimension != null && entry.dimension().equals(myDimension);
+        String command = sameDimension
+                ? String.format(Locale.ROOT, "/tp @s %.1f %.1f %.1f", entry.x(), entry.y(), entry.z())
+                : String.format(Locale.ROOT, "/execute in %s run tp @s %.1f %.1f %.1f",
+                        entry.dimension(), entry.x(), entry.y(), entry.z());
 
         // 主体：只把指令填进聊天栏，玩家自己按回车 —— 手滑也不会把人传走
         MutableComponent body = Component.translatable("message.whogoesthere.located",
@@ -827,19 +840,21 @@ public class ScanScreen extends Screen {
             this.entry = entry;
         }
 
-        /** 带数量的显示名——列表和朗读都用它，保证「僵尸 ×5」读出来一致。 */
+        /** 带数量的显示名——列表和朗读都用它，保证「僵尸 ×5」读出来一致；置顶的加一颗星。 */
         private Component label() {
-            return this.entry.isStacked()
+            Component base = this.entry.isStacked()
                     ? Component.translatable("gui.whogoesthere.row.count", this.entry.name(), this.entry.count())
                     : this.entry.name();
+            return this.entry.isPinned() ? Component.translatable("gui.whogoesthere.row.pinned", base) : base;
         }
 
         @Override
         public void render(GuiGraphics graphics, int index, int top, int left, int width, int height,
                            int mouseX, int mouseY, boolean hovered, float partialTick) {
-            // 键盘/鼠标选中的那一行也换个亮色文字，跟底色块配合
+            // 键盘/鼠标选中的那一行也换个亮色文字，跟底色块配合；置顶条目平时走金色
             boolean selected = ScanScreen.this.resultList.getSelected() == this;
-            int nameColor = selected ? COLOR_TEXT_SELECTED : (hovered ? COLOR_TEXT_HOVER : COLOR_TEXT);
+            int nameColor = selected ? COLOR_TEXT_SELECTED
+                    : (hovered ? COLOR_TEXT_HOVER : (this.entry.isPinned() ? COLOR_PINNED : COLOR_TEXT));
             int textLeft = left + 4;
 
             // 掉落物：先画 16×16 图标，文字往后让一格
@@ -850,9 +865,11 @@ public class ScanScreen extends Screen {
 
             graphics.drawString(ScanScreen.this.font, this.label(), textLeft, top + 3, nameColor);
 
-            Component detail = Component.translatable("gui.whogoesthere.row.detail",
-                    String.format(Locale.ROOT, "%.1f", this.entry.distance()),
-                    coordsOf(this.entry));
+            Component detail = this.entry.isCrossDimension()
+                    ? Component.translatable("gui.whogoesthere.row.detail.crossdim", coordsOf(this.entry))
+                    : Component.translatable("gui.whogoesthere.row.detail",
+                            String.format(Locale.ROOT, "%.1f", this.entry.distance()),
+                            coordsOf(this.entry));
             graphics.drawString(ScanScreen.this.font, detail, textLeft, top + 13, COLOR_DIM);
 
             // 右上角：所属模组（这才是「按模组分类」看得见的那一半）

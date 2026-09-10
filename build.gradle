@@ -17,6 +17,9 @@ java {
 neoForge {
     version = neo_version
 
+    // 放宽 Mob#persistenceRequired 的可见性（橡皮擦要把“不掉落”设回 false）
+    accessTransformers.from('src/main/resources/META-INF/accesstransformer.cfg')
+
     runs {
         client {
             client()

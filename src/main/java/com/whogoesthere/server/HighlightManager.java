@@ -4,8 +4,10 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.UUID;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -29,23 +31,38 @@ public final class HighlightManager {
     private HighlightManager() {
     }
 
-    /** 给实体打标记；重复点同一个实体会刷新计时。 */
-    public static void apply(ServerPlayer player, int entityId) {
-        ServerLevel level = player.serverLevel();
-        Entity target = level.getEntity(entityId);
-        if (target == null) {
+    /**
+     * 给实体打标记；重复点同一个实体会刷新计时。
+     *
+     * <p>给 uuid + dimension 时按「跨维度」定位（置顶条目走这条路），
+     * 否则用玩家当前维度里的网络 id。</p>
+     */
+    public static void apply(ServerPlayer player, int entityId, UUID uuid, ResourceLocation dimension) {
+        ServerLevel level;
+        Entity target;
+        if (uuid != null) {
+            MinecraftServer server = player.getServer();
+            level = server == null || dimension == null
+                    ? null
+                    : server.getLevel(ResourceKey.create(Registries.DIMENSION, dimension));
+            target = level == null ? null : level.getEntity(uuid);
+        } else {
+            level = player.serverLevel();
+            target = level.getEntity(entityId);
+        }
+        if (level == null || target == null) {
             player.displayClientMessage(Component.translatable("message.whogoesthere.gone"), true);
             return;
         }
 
         target.setGlowingTag(true);
 
-        UUID uuid = target.getUUID();
-        ResourceKey<Level> dimension = level.dimension();
+        UUID targetUuid = target.getUUID();
+        ResourceKey<Level> targetDimension = level.dimension();
         long expiresAt = level.getGameTime() + HIGHLIGHT_DURATION_TICKS;
 
-        ACTIVE.removeIf(h -> h.uuid().equals(uuid) && h.dimension().equals(dimension));
-        ACTIVE.add(new Highlight(dimension, uuid, expiresAt));
+        ACTIVE.removeIf(h -> h.uuid().equals(targetUuid) && h.dimension().equals(targetDimension));
+        ACTIVE.add(new Highlight(targetDimension, targetUuid, expiresAt));
     }
 
     public static void onServerTick(ServerTickEvent.Post event) {

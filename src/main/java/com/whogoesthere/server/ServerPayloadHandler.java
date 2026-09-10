@@ -32,6 +32,6 @@ public final class ServerPayloadHandler {
         if (!(context.player() instanceof ServerPlayer player)) {
             return;
         }
-        context.enqueueWork(() -> HighlightManager.apply(player, payload.entityId()));
+        context.enqueueWork(() -> HighlightManager.apply(player, payload.entityId(), payload.uuid(), payload.dimension()));
     }
 }

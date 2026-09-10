@@ -19,10 +19,10 @@ public final class ModNetworking {
     /**
      * 网络版本号：两端不一致时 NeoForge 会直接拒绝连接，方便改协议时防呆。
      *
-     * <p>v0.2 从 {@code 1} 提到 {@code 2} —— {@code EntityInfo} 加了 kind/namespace/count/stack，
-     * 老客户端碰上 0.2 服务端只会被干净地拒之门外，而不是解出一个错位的名单。</p>
+     * <p>v0.2 从 {@code 1} 提到 {@code 2} —— {@code EntityInfo} 加了 kind/namespace/count/stack。
+     * v0.3 提到 {@code 3} —— {@code EntityInfo} 再加 pinned/uuid，置顶条目支持跨维度定位。</p>
      */
-    public static final String NETWORK_VERSION = "2";
+    public static final String NETWORK_VERSION = "3";
 
     private ModNetworking() {
     }

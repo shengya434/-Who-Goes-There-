@@ -3,6 +3,7 @@ package com.whogoesthere;
 import com.mojang.logging.LogUtils;
 import com.whogoesthere.network.ModNetworking;
 import com.whogoesthere.server.HighlightManager;
+import com.whogoesthere.server.StampManager;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
@@ -27,9 +28,17 @@ public class WhoGoesThere {
         // --- 两端都跑的部分 ---------------------------------------------
         // 网络包登记（mod 总线）
         modEventBus.addListener(ModNetworking::register);
+        // 物品 / 实体数据附件登记（mod 总线）
+        ModItems.ITEMS.register(modEventBus);
+        ModAttachments.ATTACHMENT_TYPES.register(modEventBus);
+        modEventBus.addListener(ModItems::addCreativeTabItems);
         // 发光标记 10 秒到期的计时
         NeoForge.EVENT_BUS.addListener(HighlightManager::onServerTick);
         NeoForge.EVENT_BUS.addListener(HighlightManager::onServerStopped);
+        // 印章：开服重建强制加载、每秒跟随移动、死亡清理
+        NeoForge.EVENT_BUS.addListener(StampManager::onServerStarted);
+        NeoForge.EVENT_BUS.addListener(StampManager::onServerTick);
+        NeoForge.EVENT_BUS.addListener(StampManager::onLivingDeath);
 
         // --- 仅客户端的部分 ---------------------------------------------
         // 这里用 dist 判断包起来：客户端专有类只在客户端被加载，

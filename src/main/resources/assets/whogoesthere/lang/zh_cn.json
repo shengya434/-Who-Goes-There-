@@ -17,5 +17,20 @@
   "message.whogoesthere.tp.button": "[直接传送]",
   "message.whogoesthere.tp.suggest.tooltip": "点击把 %s 填进聊天栏",
   "message.whogoesthere.tp.run.tooltip": "点击直接执行 %s",
-  "message.whogoesthere.gone": "那东西已经不在了。"
+  "message.whogoesthere.gone": "那东西已经不在了。",
+
+  "item.whogoesthere.stamp": "印章",
+  "item.whogoesthere.eraser": "橡皮擦",
+  "item.whogoesthere.stamp.tooltip": "右键生物盖章：区块永加载、不会消失，并在「谁在那！」名单里永置顶",
+  "item.whogoesthere.eraser.tooltip": "右键生物擦除印章：取消永加载与置顶",
+
+  "message.whogoesthere.stamp.ok": "已给 %s 盖章：永加载 + 置顶。",
+  "message.whogoesthere.stamp.already": "已经盖过章了。",
+  "message.whogoesthere.stamp.player": "不能给人盖章。",
+  "message.whogoesthere.erase.ok": "已擦除 %s 的印章。",
+  "message.whogoesthere.erase.none": "它身上没有印章。",
+
+  "gui.whogoesthere.row.pinned": "★ %s",
+  "gui.whogoesthere.row.detail.crossdim": "异界  ·  坐标 %s",
+  "gui.whogoesthere.pinned.unknown": "已盖章实体（未加载）"
 }

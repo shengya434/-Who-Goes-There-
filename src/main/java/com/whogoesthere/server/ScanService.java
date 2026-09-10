@@ -5,11 +5,17 @@ import com.whogoesthere.network.payload.ScanResultPayload.EntityInfo;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
@@ -18,18 +24,16 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 
 /**
- * 扫描本体：把发起者所在维度里所有已加载的实体找出来。
+ * 扫描本体：把「盖了章的置顶目标」和「发起者所在维度里所有已加载的实体」找出来。
  *
- * <p>用 {@link ServerLevel#getAllEntities()}，所以不限于玩家周围那圈实体跟踪范围，
- * 被区块加载器保活的远处实体也会被算进来。</p>
- *
- * <p>v0.2 起收集两类东西：</p>
- * <ul>
- *   <li>{@link LivingEntity} —— 一格一条，和 v0.1 一样；</li>
- *   <li>{@link ItemEntity} —— 按**物品类型**聚合成一条：总数 + 最近那一份的坐标/距离。</li>
- * </ul>
+ * <p>v0.2 起收集两块：置顶段（登记表里盖章的，跨维度找）+ 常规段（活物一格一条、
+ * 掉落物按物品类型聚合）。</p>
  */
 public final class ScanService {
+
+    /** 找不到实体时，置顶条目用这个占位注册名 —— 免得界面拿到 null。 */
+    private static final ResourceLocation UNKNOWN_TYPE =
+            ResourceLocation.fromNamespaceAndPath("whogoesthere", "stamped");
 
     private ScanService() {
     }
@@ -47,9 +51,63 @@ public final class ScanService {
         // 物品 id -> 该类掉落物的聚合结果（最近一份 + 总数）
         Map<ResourceLocation, ItemAggregate> itemGroups = new HashMap<>();
 
+        // ---- 置顶段：登记表里盖了章的，跨维度找齐 ----
+        List<EntityInfo> pinned = new ArrayList<>();
+        Set<UUID> pinnedIds = new HashSet<>();
+        MinecraftServer server = player.getServer();
+        if (server != null) {
+            StampRegistry registry = StampRegistry.get(server);
+            for (UUID uuid : new ArrayList<>(registry.entryIds())) {
+                StampRegistry.Entry entry = registry.get(uuid);
+                if (entry == null) {
+                    continue;
+                }
+                Entity entity = resolve(server, entry.dimension(), uuid);
+                ResourceLocation entryDimension = entry.dimension();
+                double x = entry.x();
+                double y = entry.y();
+                double z = entry.z();
+                String namespace;
+                ResourceLocation typeId;
+                Component name;
+                int entityId;
+                if (entity != null) {
+                    entryDimension = entity.level().dimension().location();
+                    x = entity.getX();
+                    y = entity.getY();
+                    z = entity.getZ();
+                    typeId = BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType());
+                    namespace = typeId.getNamespace();
+                    name = entity.getDisplayName();
+                    entityId = entity.getId();
+                } else {
+                    typeId = UNKNOWN_TYPE;
+                    namespace = UNKNOWN_TYPE.getNamespace();
+                    name = Component.translatable("gui.whogoesthere.pinned.unknown");
+                    entityId = 0;
+                }
+                double distance;
+                if (entryDimension.equals(dimension)) {
+                    double dx = x - originX;
+                    double dy = y - originY;
+                    double dz = z - originZ;
+                    distance = round1(Math.sqrt(dx * dx + dy * dy + dz * dz));
+                } else {
+                    distance = -1.0D; // 异维度：距离没有意义，界面显示「异界」
+                }
+                pinned.add(ScanResultPayload.pinned(namespace, entityId, typeId, name, x, y, z, distance,
+                        entryDimension, uuid));
+                pinnedIds.add(uuid);
+            }
+        }
+
+        // ---- 常规段：本维度的活物 + 聚合掉落物 ----
         for (Entity entity : level.getAllEntities()) {
             if (entity.getId() == selfId || entity == player) {
                 continue; // 别把自己也报出来
+            }
+            if (pinnedIds.contains(entity.getUUID())) {
+                continue; // 已经作为置顶条目报过了，别重复
             }
 
             double dx = entity.getX() - originX;
@@ -100,10 +158,21 @@ public final class ScanService {
         }
 
         found.sort(Comparator.comparingDouble(EntityInfo::distance));
-        if (found.size() > ScanResultPayload.MAX_ENTRIES) {
-            return new ArrayList<>(found.subList(0, ScanResultPayload.MAX_ENTRIES));
+
+        // 置顶段永远在最前；上限不够时优先保置顶
+        List<EntityInfo> result = new ArrayList<>(pinned.size() + found.size());
+        result.addAll(pinned);
+        result.addAll(found);
+        if (result.size() > ScanResultPayload.MAX_ENTRIES) {
+            return new ArrayList<>(result.subList(0, ScanResultPayload.MAX_ENTRIES));
         }
-        return found;
+        return result;
+    }
+
+    /** 在指定维度按 UUID 找实体；维度不存在或实体未加载都返回 null。 */
+    private static Entity resolve(MinecraftServer server, ResourceLocation dimension, UUID uuid) {
+        ServerLevel level = server.getLevel(ResourceKey.create(Registries.DIMENSION, dimension));
+        return level == null ? null : level.getEntity(uuid);
     }
 
     /** 保留 1 位小数。 */

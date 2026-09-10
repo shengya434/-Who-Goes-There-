@@ -1,0 +1,9 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    { "item": "minecraft:slime_ball" },
+    { "item": "minecraft:white_dye" }
+  ],
+  "result": { "id": "whogoesthere:eraser", "count": 1 }
+}

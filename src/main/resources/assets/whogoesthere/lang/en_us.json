@@ -17,5 +17,20 @@
   "message.whogoesthere.tp.button": "[Teleport]",
   "message.whogoesthere.tp.suggest.tooltip": "Click to put %s in chat",
   "message.whogoesthere.tp.run.tooltip": "Click to run %s",
-  "message.whogoesthere.gone": "Whatever it was, it is gone now."
+  "message.whogoesthere.gone": "Whatever it was, it is gone now.",
+
+  "item.whogoesthere.stamp": "Stamp",
+  "item.whogoesthere.eraser": "Eraser",
+  "item.whogoesthere.stamp.tooltip": "Right-click a creature to stamp it: keep its chunk loaded and pin it to the top of the Who Goes There? list",
+  "item.whogoesthere.eraser.tooltip": "Right-click a creature to remove its stamp",
+
+  "message.whogoesthere.stamp.ok": "Stamped %s — chunk kept loaded, pinned to the top.",
+  "message.whogoesthere.stamp.already": "It is already stamped.",
+  "message.whogoesthere.stamp.player": "You cannot stamp a player.",
+  "message.whogoesthere.erase.ok": "Erased the stamp on %s.",
+  "message.whogoesthere.erase.none": "It carries no stamp.",
+
+  "gui.whogoesthere.row.pinned": "★ %s",
+  "gui.whogoesthere.row.detail.crossdim": "other dimension  ·  %s",
+  "gui.whogoesthere.pinned.unknown": "Stamped entity (not loaded)"
 }
