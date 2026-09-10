@@ -7,10 +7,16 @@
   "gui.whogoesthere.title": "Who Goes There?",
   "gui.whogoesthere.search": "Search",
   "gui.whogoesthere.search.hint": "Filter by name...",
+  "gui.whogoesthere.filter.all": "All mods",
+  "gui.whogoesthere.filter.mod": "Mod: %s",
   "gui.whogoesthere.row.detail": "dist %s  ·  %s",
+  "gui.whogoesthere.row.count": "%s ×%s",
   "gui.whogoesthere.row.narration": "%s, %s blocks away, at %s",
-  "gui.whogoesthere.empty": "Nothing living answers...",
+  "gui.whogoesthere.empty": "Nothing answers...",
 
-  "message.whogoesthere.located": "%s  ·  %s  ·  %s  (glowing for 10s)",
+  "message.whogoesthere.located": "%s  ·  %s  ·  %s  (glowing 10s — click to teleport)",
+  "message.whogoesthere.tp.button": "[Teleport]",
+  "message.whogoesthere.tp.suggest.tooltip": "Click to put %s in chat",
+  "message.whogoesthere.tp.run.tooltip": "Click to run %s",
   "message.whogoesthere.gone": "Whatever it was, it is gone now."
 }

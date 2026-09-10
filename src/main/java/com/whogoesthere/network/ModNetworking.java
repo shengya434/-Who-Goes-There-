@@ -16,8 +16,13 @@ import net.neoforged.neoforge.network.registration.PayloadRegistrar;
  */
 public final class ModNetworking {
 
-    /** 网络版本号：两端不一致时 NeoForge 会直接拒绝连接，方便以后改协议时防呆。 */
-    public static final String NETWORK_VERSION = "1";
+    /**
+     * 网络版本号：两端不一致时 NeoForge 会直接拒绝连接，方便改协议时防呆。
+     *
+     * <p>v0.2 从 {@code 1} 提到 {@code 2} —— {@code EntityInfo} 加了 kind/namespace/count/stack，
+     * 老客户端碰上 0.2 服务端只会被干净地拒之门外，而不是解出一个错位的名单。</p>
+     */
+    public static final String NETWORK_VERSION = "2";
 
     private ModNetworking() {
     }

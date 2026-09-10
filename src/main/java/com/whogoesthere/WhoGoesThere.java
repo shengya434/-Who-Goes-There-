@@ -14,7 +14,8 @@ import org.slf4j.Logger;
  * Who Goes There? / 谁在那！
  *
  * A sentry's challenge shouted into the dark: ask, and the world answers back.
- * v0.1.0 — press V, get a list of everything alive around you.
+ * v0.2.0 — press V, get a list of everything alive (and everything dropped) around you,
+ * grouped by mod, clickable straight to a teleport.
  */
 @Mod(WhoGoesThere.MOD_ID)
 public class WhoGoesThere {

@@ -22,7 +22,8 @@ public final class ServerPayloadHandler {
         }
         context.enqueueWork(() -> {
             List<ScanResultPayload.EntityInfo> entries = ScanService.scan(player);
-            WhoGoesThere.LOGGER.debug("[谁在那！] {} 发起了扫描，找到 {} 个活物", player.getGameProfile().getName(), entries.size());
+            WhoGoesThere.LOGGER.debug("[谁在那！] {} 发起了扫描，找到 {} 条结果（含聚合后的掉落物）",
+                    player.getGameProfile().getName(), entries.size());
             context.reply(new ScanResultPayload(entries));
         });
     }
