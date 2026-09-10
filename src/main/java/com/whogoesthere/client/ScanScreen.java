@@ -73,6 +73,24 @@ public class ScanScreen extends Screen {
     private static final int COLOR_POPUP_TEXT_ON = 0xFFFFFFFF;
     private static final int COLOR_POPUP_NS = 0xFF9FD4FF;
     private static final int COLOR_POPUP_TRACK = 0xFF2A2A2A;
+    /**
+     * 浮窗抬升到的 pose z。
+     *
+     * <p>MC 1.21.1 的 GUI 绘制是<b>带深度测试</b>的，而且 vanilla 自己靠 pose 的 z 分层：
+     * {@code GuiGraphics.renderItem} 把物品图标推到 {@code z=150}
+     * （{@code PoseStack.translate(x+8, y+8, 150)}，见字节码 {@code sipush 150}），
+     * {@code renderTooltipInternal} 又把底和字都放到 {@code z=400}
+     * （{@code translate(0,0,400)} + {@code TooltipRenderUtil.renderTooltipBackground(..., 400, ...)}）。</p>
+     *
+     * <p>而 {@code GuiGraphics.fill}/{@code drawString} 默认都在 {@code z=0}，也就是这一套里
+     * <b>最远</b>的一层。深度测试是 {@code LEQUAL}：后来者要“更近或相等”才能落笔，所以
+     * 只要被覆盖区域里已经有 {@code z>0} 的像素（结果列表里掉落物行的物品图标就是），
+     * 浮窗底/字就会被丢掉，露出下面的列表 —— 这就是“浮窗透字/重影”的真因。</p>
+     *
+     * <p>修法与 vanilla 一致：整块浮窗抬到 400（与 tooltip 同层、且高于图标的 150）。
+     * 底与字必须<b>同一 z</b>、且底先画（同 z 时 {@code LEQUAL} 相等即通过）。</p>
+     */
+    private static final float POPUP_Z = 400.0F;
 
     /** 模组显示名缓存：setEntries 之后每帧都会画行，别每帧去翻 ModList。 */
     private static final Map<String, String> MOD_NAME_CACHE = new HashMap<>();
@@ -88,8 +106,12 @@ public class ScanScreen extends Screen {
 
     private EditBox searchBox;
     private ResultList resultList;
+    /** 结果列表当前边界（浮窗打开时会被 {@link #layoutResultList()} 下移/压扁）。 */
     private int listTop;
     private int listHeight;
+    /** 浮窗关闭时结果列表的基准边界；浮窗打开时在此基础上让位，关闭后还原。 */
+    private int baseListTop;
+    private int baseListHeight;
 
     /** 光标处正在输入的 @ 词（含前导 @）；null = 当前没有补全上下文。 */
     private String completionWord;
@@ -119,8 +141,12 @@ public class ScanScreen extends Screen {
 
     @Override
     protected void init() {
-        this.listTop = 56;
-        this.listHeight = Math.max(ROW_HEIGHT * 2, this.height - this.listTop - 32);
+        // 记下基准边界：浮窗关闭时列表就用它；浮窗打开时 layoutResultList() 会在此基础上
+        // 把列表整体压到浮窗下沿之下，关闭后还原到这里。
+        this.baseListTop = 56;
+        this.baseListHeight = Math.max(ROW_HEIGHT * 2, this.height - this.baseListTop - 32);
+        this.listTop = this.baseListTop;
+        this.listHeight = this.baseListHeight;
 
         this.resultList = new ResultList(this.minecraft, this.width - LIST_MARGIN * 2, this.listHeight, this.listTop, ROW_HEIGHT);
         this.resultList.setX(LIST_MARGIN);
@@ -422,6 +448,65 @@ public class ScanScreen extends Screen {
         return true;
     }
 
+    // ------------------------------------------------------------------
+    // 浮窗几何 + 列表布局兜底
+    // ------------------------------------------------------------------
+
+    /** 浮窗顶边 y：贴在搜索框正下方。 */
+    private int popupTopY() {
+        return this.searchBox.getY() + this.searchBox.getHeight();
+    }
+
+    /** 浮窗这次实际显示几行（不超过候选数）。 */
+    private int visibleCompletionRows() {
+        return Math.min(COMPLETION_VISIBLE_ROWS, this.completions.size());
+    }
+
+    /** 浮窗高度：可见行 + 上下各 2px 内边距。 */
+    private int popupHeight() {
+        return visibleCompletionRows() * COMPLETION_ROW_HEIGHT + 4;
+    }
+
+    /** 浮窗下沿 y。 */
+    private int popupBottomY() {
+        return this.popupTopY() + this.popupHeight();
+    }
+
+    /**
+     * 结果列表的确定性布局兜底。
+     *
+     * <p>浮窗打开时把 {@code resultList} 整体挪到浮窗下沿之下、并相应压扁，浮窗关闭时还原。</p>
+     *
+     * <p>这是对上面 {@link #POPUP_Z} 那套“抬层”机制的第二重保险：即使某个环境下深度/层级
+     * 机制再次失效（或别的方块把浮窗位置改了），浮窗和列表在几何上就<b>不重叠</b>，
+     * 不可能再出现两种文字叠在一起。</p>
+     *
+     * <p>只动 {@code setY}/{@code setHeight}：{@code updateSizeAndPosition(w,h,y)} 会把 x 设成 0，
+     * 用了列表就贴到屏幕左边，所以这里绝不碰它。</p>
+     */
+    private void layoutResultList() {
+        if (this.resultList == null) {
+            return;
+        }
+        int bottom = this.height - 32;
+        int top = this.baseListTop;
+        int height = this.baseListHeight;
+        if (!this.completions.isEmpty()) {
+            int shifted = Math.max(this.baseListTop, this.popupBottomY() + 4);
+            top = shifted;
+            height = Math.max(ROW_HEIGHT, bottom - shifted);
+        }
+        if (this.resultList.getY() != top) {
+            this.resultList.setY(top);
+        }
+        if (this.resultList.getHeight() != height) {
+            this.resultList.setHeight(height);
+            this.resultList.clampScrollAmount();
+        }
+        this.listTop = top;
+        this.listHeight = height;
+    }
+
     /** 浮层里第 {@code index} 行是否被鼠标指着。 */
     private boolean isOverCompletion(double mouseX, double mouseY, int index) {
         int x = this.searchBox.getX();
@@ -435,13 +520,20 @@ public class ScanScreen extends Screen {
             return;
         }
         int x = this.searchBox.getX();
-        int y = this.searchBox.getY() + this.searchBox.getHeight();
+        int y = this.popupTopY();
         int width = this.searchBox.getWidth();
-        int visibleRows = Math.min(COMPLETION_VISIBLE_ROWS, this.completions.size());
-        int height = visibleRows * COMPLETION_ROW_HEIGHT + 4;
+        int visibleRows = this.visibleCompletionRows();
+        int height = this.popupHeight();
         boolean scrollbar = this.completions.size() > visibleRows;
         // 有滚动条时给右侧让出 4px，别让命名空间文字压上去
         int rightMargin = scrollbar ? 7 : 3;
+
+        // 【真因】MC 1.21.1 的 GUI 带深度测试（RenderType.GUI = LEQUAL_DEPTH_TEST + 写深度），
+        // vanilla 靠 pose z 分层：物品图标 renderItem 在 z=150，tooltip 在 z=400，而 fill/drawString
+        // 默认在 z=0 —— 最远的一层，覆盖不到已经写入的更近像素（掉落物行的物品图标）。
+        // 所以这里把整块浮窗抬到 z=400：底、边、行、滚动条全在同一 z，且底先画。
+        graphics.pose().pushPose();
+        graphics.pose().translate(0.0F, 0.0F, POPUP_Z);
 
         // 画在列表之上：super.render 已经把列表画完了，这里是最后一层。
         // 底和边都是 alpha=0xFF 的纯色 —— 完全不透明，不再糊。
@@ -490,6 +582,9 @@ public class ScanScreen extends Screen {
             int thumbTop = trackTop + (trackHeight - thumbHeight) * this.completionScroll / Math.max(1, maxScroll);
             graphics.fill(barX, thumbTop, barX + 2, thumbTop + thumbHeight, COLOR_POPUP_BORDER);
         }
+
+        // 与上面的 pushPose 配对，别把 400 的 z 泄漏给后面的绘制
+        graphics.pose().popPose();
     }
 
     // ------------------------------------------------------------------
@@ -616,6 +711,8 @@ public class ScanScreen extends Screen {
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         // 光标可能被方向键/点击挪过，每帧顺手校正一次（有缓存，几乎不花性能）
         this.refreshCompletions();
+        // 候选集可能刚变过 —— 先把列表让位/还原算好，再画
+        this.layoutResultList();
 
         super.render(graphics, mouseX, mouseY, partialTick);
 
