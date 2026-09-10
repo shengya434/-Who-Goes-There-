@@ -27,13 +27,21 @@ import net.minecraft.world.item.ItemStack;
  * 扫描本体：把「盖了章的置顶目标」和「发起者所在维度里所有已加载的实体」找出来。
  *
  * <p>v0.2 起收集两块：置顶段（登记表里盖章的，跨维度找）+ 常规段（活物一格一条、
- * 掉落物按物品类型聚合）。</p>
+ * 掉落物按「物品类型 + 空间簇」聚合）。</p>
  */
 public final class ScanService {
 
     /** 找不到实体时，置顶条目用这个占位注册名 —— 免得界面拿到 null。 */
     private static final ResourceLocation UNKNOWN_TYPE =
             ResourceLocation.fromNamespaceAndPath("whogoesthere", "stamped");
+
+    /**
+     * 掉落物分簇半径（格）：彼此在这个距离以内才算「同一堆」。
+     *
+     * <p>取 8 格的理由：掉落物落地后会轻微散开（几格外），8 格足够把「同一处丢的一堆」
+     * 收进同一簇；而玩家在不同地点各丢一堆时，两堆相隔通常远大于 8 格，会自然拆开。</p>
+     */
+    private static final double ITEM_CLUSTER_RADIUS = 8.0D;
 
     private ScanService() {
     }
@@ -48,8 +56,8 @@ public final class ScanService {
         int selfId = player.getId();
 
         List<EntityInfo> found = new ArrayList<>();
-        // 物品 id -> 该类掉落物的聚合结果（最近一份 + 总数）
-        Map<ResourceLocation, ItemAggregate> itemGroups = new HashMap<>();
+        // 物品 id -> 该物品在本维度里的全部掉落物（收集完再按空间邻近度分簇，见 clusterItemDrops）
+        Map<ResourceLocation, List<ItemEntity>> itemDrops = new HashMap<>();
 
         // ---- 置顶段：登记表里盖了章的，跨维度找齐 ----
         List<EntityInfo> pinned = new ArrayList<>();
@@ -133,28 +141,26 @@ public final class ScanService {
                     continue; // 空 stack 的掉落物（理论上不该有）跳过，免得包序列化炸掉
                 }
                 ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
-                ItemAggregate previous = itemGroups.get(itemId);
-                if (previous == null) {
-                    itemGroups.put(itemId, ItemAggregate.first(itemId, itemEntity, distance));
-                } else {
-                    itemGroups.put(itemId, previous.plus(itemEntity, distance));
-                }
+                itemDrops.computeIfAbsent(itemId, key -> new ArrayList<>()).add(itemEntity);
             }
         }
 
-        for (ItemAggregate group : itemGroups.values()) {
-            found.add(ScanResultPayload.item(
-                    group.itemId().getNamespace(),
-                    group.nearestId(),
-                    group.itemId(),
-                    group.name(),
-                    group.x(),
-                    group.y(),
-                    group.z(),
-                    group.distance(),
-                    dimension,
-                    group.count(),
-                    group.sample()));
+        for (Map.Entry<ResourceLocation, List<ItemEntity>> group : itemDrops.entrySet()) {
+            for (ItemAggregate aggregate : clusterItemDrops(group.getKey(), group.getValue(),
+                    originX, originY, originZ)) {
+                found.add(ScanResultPayload.item(
+                        aggregate.itemId().getNamespace(),
+                        aggregate.nearestId(),
+                        aggregate.itemId(),
+                        aggregate.name(),
+                        aggregate.x(),
+                        aggregate.y(),
+                        aggregate.z(),
+                        aggregate.distance(),
+                        dimension,
+                        aggregate.count(),
+                        aggregate.sample()));
+            }
         }
 
         found.sort(Comparator.comparingDouble(EntityInfo::distance));
@@ -180,10 +186,101 @@ public final class ScanService {
         return Math.round(value * 10.0D) / 10.0D;
     }
 
+    /** 实体到某点的直线距离（原始值，不四舍五入）。 */
+    private static double distanceTo(Entity entity, double x, double y, double z) {
+        double dx = entity.getX() - x;
+        double dy = entity.getY() - y;
+        double dz = entity.getZ() - z;
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
     /**
-     * 同类掉落物的聚合体：记住「最近那一份」的位置/实体 id/示例 stack，同时累加总数。
+     * 把同一种物品的掉落物按「空间邻近度」分簇，每簇产出一条聚合记录。
      *
-     * @param sample 示例 stack，数量已归一为 1（图标和物品名从它取）
+     * <p>为什么聚合键是「物品 id + 空间簇」而不是纯物品 id：同一种物品经常散落在相隔很远的
+     * 好几处（例如玩家在 A 点丢一堆、跑到 B 点又丢一堆）。若只按物品 id 合并成一行，列表里
+     * 只会报「最近那一份」的坐标，玩家照着那个坐标过去只能找到一堆，其余几堆根本看不到，
+     * 于是就有了「显示总量、却只报一处坐标」的查找困扰。按空间分簇后，相隔超过
+     * {@value #ITEM_CLUSTER_RADIUS} 格的各成一行、各报各自坐标，才能真正找齐。</p>
+     *
+     * <p>算法：先按「到发起者的距离」升序排列，再贪心归簇 —— 与某个已有簇中心距离不超过
+     * {@value #ITEM_CLUSTER_RADIUS} 格就并入其中最近的那个簇，否则新开一簇。因为按距离升序处理，
+     * 每簇第一个加入的成员天然就是「离发起者最近的那一份」，用它做定位/发光最合适。</p>
+     */
+    private static List<ItemAggregate> clusterItemDrops(ResourceLocation itemId, List<ItemEntity> drops,
+                                                        double originX, double originY, double originZ) {
+        drops.sort(Comparator.comparingDouble(drop -> distanceTo(drop, originX, originY, originZ)));
+
+        List<DropCluster> clusters = new ArrayList<>();
+        for (ItemEntity drop : drops) {
+            DropCluster nearest = null;
+            double nearestGap = Double.MAX_VALUE;
+            for (DropCluster cluster : clusters) {
+                double gap = cluster.gapToCenter(drop.getX(), drop.getY(), drop.getZ());
+                if (gap <= ITEM_CLUSTER_RADIUS && gap < nearestGap) {
+                    nearestGap = gap;
+                    nearest = cluster;
+                }
+            }
+            if (nearest == null) {
+                clusters.add(new DropCluster(drop));
+            } else {
+                nearest.add(drop);
+            }
+        }
+
+        List<ItemAggregate> aggregates = new ArrayList<>(clusters.size());
+        for (DropCluster cluster : clusters) {
+            ItemStack stack = cluster.nearest.getItem();
+            aggregates.add(new ItemAggregate(itemId, cluster.nearest.getId(), cluster.nearest.getX(),
+                    cluster.nearest.getY(), cluster.nearest.getZ(),
+                    round1(distanceTo(cluster.nearest, originX, originY, originZ)), stack.getHoverName(),
+                    stack.copyWithCount(1), cluster.count));
+        }
+        return aggregates;
+    }
+
+    /** 贪心分簇过程中的一个临时簇：累加质心，并记住「最近那一份」用于定位/发光。 */
+    private static final class DropCluster {
+        private final ItemEntity nearest;
+        private int count;
+        private double sumX;
+        private double sumY;
+        private double sumZ;
+
+        private DropCluster(ItemEntity first) {
+            this.nearest = first;
+            this.count = 1;
+            this.sumX = first.getX();
+            this.sumY = first.getY();
+            this.sumZ = first.getZ();
+        }
+
+        private void add(ItemEntity entity) {
+            this.count++;
+            this.sumX += entity.getX();
+            this.sumY += entity.getY();
+            this.sumZ += entity.getZ();
+        }
+
+        /** 某点到簇质心的距离 —— 判定「算不算同一堆」用的就是它。 */
+        private double gapToCenter(double x, double y, double z) {
+            double cx = this.sumX / this.count;
+            double cy = this.sumY / this.count;
+            double cz = this.sumZ / this.count;
+            double dx = x - cx;
+            double dy = y - cy;
+            double dz = z - cz;
+            return Math.sqrt(dx * dx + dy * dy + dz * dz);
+        }
+    }
+
+    /**
+     * 一个「空间簇」聚合出来的掉落物记录：物品 id + 该簇的总数 + 该簇最近那一份的位置。
+     *
+     * @param nearestId 该簇里离发起者最近那一份的实体 id —— 点选定位、发光都用它
+     * @param sample    示例 stack，数量已归一为 1（图标和物品名从它取）
+     * @param count     该簇内掉落物份数（一份掉落物记 1）
      */
     private record ItemAggregate(
             ResourceLocation itemId,
@@ -195,21 +292,5 @@ public final class ScanService {
             Component name,
             ItemStack sample,
             int count) {
-
-        static ItemAggregate first(ResourceLocation itemId, ItemEntity entity, double distance) {
-            return new ItemAggregate(itemId, entity.getId(), entity.getX(), entity.getY(), entity.getZ(), distance,
-                    entity.getItem().getHoverName(), entity.getItem().copyWithCount(1), 1);
-        }
-
-        /** 并入另一份：总数 +1；如果新的更近，就把「最近那一份」换成它。 */
-        ItemAggregate plus(ItemEntity entity, double otherDistance) {
-            if (otherDistance < this.distance) {
-                return new ItemAggregate(this.itemId, entity.getId(), entity.getX(), entity.getY(), entity.getZ(),
-                        otherDistance, entity.getItem().getHoverName(), entity.getItem().copyWithCount(1),
-                        this.count + 1);
-            }
-            return new ItemAggregate(this.itemId, this.nearestId, this.x, this.y, this.z, this.distance, this.name,
-                    this.sample, this.count + 1);
-        }
     }
 }
