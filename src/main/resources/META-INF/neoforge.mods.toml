@@ -14,6 +14,7 @@ description='''
 §6✦ Ask, and it shall answer§r
   • Opens a search panel: every living thing around you, listed
   • Sorted by distance, filter by name
+  • Type @mod to show one mod's things only — with autocomplete
   • Click a result and the mod points you to it — even if it is far away
 
 §6✦ Built for tech packs§r

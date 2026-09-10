@@ -1,14 +1,13 @@
 {
-  "fml.menu.mods.info.description.whogoesthere": "按一个键，朝黑暗里喊一声「谁在那！」——周围的生物与掉落物会一个个报出名字、距离和方向。",
+  "fml.menu.mods.info.description.whogoesthere": "按一个键，朝黑暗里喊一声「谁在那！」——周围的生物与掉落物会一个个报出名字、距离和方向。搜「@模组」即可只看某个模组的东西，支持自动补全。",
 
   "key.categories.whogoesthere": "谁在那！",
   "key.whogoesthere.open": "谁在那！",
 
   "gui.whogoesthere.title": "谁在那！",
   "gui.whogoesthere.search": "搜索",
-  "gui.whogoesthere.search.hint": "按名字过滤……",
-  "gui.whogoesthere.filter.all": "全部模组",
-  "gui.whogoesthere.filter.mod": "模组：%s",
+  "gui.whogoesthere.search.hint": "名字 或 @模组（Tab 补全）",
+  "gui.whogoesthere.completion.entry": "%s（%s 条）",
   "gui.whogoesthere.row.detail": "距离 %s 格  ·  坐标 %s",
   "gui.whogoesthere.row.count": "%s ×%s",
   "gui.whogoesthere.row.narration": "%s，距离 %s 格，位于 %s",
