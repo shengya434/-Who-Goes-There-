@@ -2,5 +2,15 @@
   "fml.menu.mods.info.description.whogoesthere": "Press a key. Ask who is out there. Everything around you answers with its name, distance and direction.",
 
   "key.categories.whogoesthere": "Who Goes There?",
-  "key.whogoesthere.open": "Who Goes There?"
+  "key.whogoesthere.open": "Who Goes There?",
+
+  "gui.whogoesthere.title": "Who Goes There?",
+  "gui.whogoesthere.search": "Search",
+  "gui.whogoesthere.search.hint": "Filter by name...",
+  "gui.whogoesthere.row.detail": "dist %s  ·  %s",
+  "gui.whogoesthere.row.narration": "%s, %s blocks away, at %s",
+  "gui.whogoesthere.empty": "Nothing living answers...",
+
+  "message.whogoesthere.located": "%s  ·  %s  ·  %s  (glowing for 10s)",
+  "message.whogoesthere.gone": "Whatever it was, it is gone now."
 }
