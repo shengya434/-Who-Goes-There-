@@ -1,0 +1,36 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="${mod_license}"
+
+[[mods]]
+modId="${mod_id}"
+version="${mod_version}"
+displayName="Who Goes There? · 谁在那！"
+authors="${mod_authors}"
+credits="Made with love by Tendo Alice and sensei"
+description='''
+§bWho Goes There?§r — press a key, and something answers.
+
+§6✦ Ask, and it shall answer§r
+  • Opens a search panel: every living thing around you, listed
+  • Sorted by distance, filter by name
+  • Click a result and the mod points you to it — even if it is far away
+
+§6✦ Built for tech packs§r
+  • Scans every loaded chunk, not just the circle around you
+  • Includes areas kept alive by chunk loaders
+'''
+
+[[dependencies.${mod_id}]]
+modId="neoforge"
+type="required"
+versionRange="[21.1,)"
+ordering="NONE"
+side="BOTH"
+
+[[dependencies.${mod_id}]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1,1.22)"
+ordering="NONE"
+side="BOTH"
