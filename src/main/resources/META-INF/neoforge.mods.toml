@@ -34,3 +34,11 @@ type="required"
 versionRange="[1.21.1,1.22)"
 ordering="NONE"
 side="BOTH"
+
+# 软依赖：装了 JustEnoughCharacters 就借用它的拼音引擎做名字搜索
+[[dependencies.${mod_id}]]
+modId="jecharacters"
+type="optional"
+versionRange="[4.5,)"
+ordering="NONE"
+side="CLIENT"

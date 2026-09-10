@@ -1,5 +1,6 @@
 package com.whogoesthere.client;
 
+import com.whogoesthere.client.compat.PinyinSearchCompat;
 import com.whogoesthere.network.payload.HighlightRequestPayload;
 import com.whogoesthere.network.payload.ScanResultPayload;
 import java.util.ArrayList;
@@ -71,7 +72,11 @@ public class ScanScreen extends Screen {
 
         List<ScanResultPayload.EntityInfo> matches = new ArrayList<>();
         for (ScanResultPayload.EntityInfo entry : this.allEntries) {
-            if (query.isEmpty() || entry.name().getString().toLowerCase(Locale.ROOT).contains(query)) {
+            // 名字走 PinyinSearchCompat（装了 JECh 就是拼音/首字母匹配），
+            // 再补一条英文注册名（type id）匹配，方便输入 "zombie" 找「僵尸」。
+            if (query.isEmpty()
+                    || PinyinSearchCompat.matches(entry.name().getString(), query)
+                    || entry.typeId().toString().toLowerCase(Locale.ROOT).contains(query)) {
                 matches.add(entry);
             }
         }
