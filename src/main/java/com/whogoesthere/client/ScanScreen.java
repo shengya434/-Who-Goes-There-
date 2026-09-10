@@ -33,11 +33,19 @@ import org.lwjgl.glfw.GLFW;
  * （{@code @apo} / {@code @apo 僵尸}），正在输入 {@code @} 词时下方会浮出候选模组
  * （完全不透明底 + 整块高亮，超出可见行数可滚动）。</p>
  *
- * <p>键盘：搜索框始终持有焦点，所以 {@code ↑/↓/Enter/Tab} 都在 {@link SearchBox#keyPressed}
- * 里自己吃掉 ——<br>
- * 浮层打开时 {@code ↑/↓} 在候选间循环移动高亮、{@code Enter} 补全高亮项；<br>
+ * <p>键盘：焦点可能落在上面的搜索框，也可能落到下面的结果列表上 —— 点滚动条
+ * （{@code AbstractSelectionList#mouseClicked} 在滚动条命中时返回 true，于是
+ * {@code Screen} 把焦点交给列表）或按 {@code Tab}（搜索框没候选时不消费 Tab，
+ * 原版的 Tab 焦点循环会把焦点送进列表）都会让焦点跑过去。所以 {@code ↑/↓/Enter}
+ * <b>两边都接</b>：{@link ScanScreen.ResultList#keyPressed} 和 {@link SearchBox#keyPressed}<br>
+ * 浮层打开时 {@code ↑/↓} 在候选间循环移动高亮、{@code Enter} 补全高亮项（这时焦点一定在
+ * 搜索框上，列表那份 keyPressed 也会让位给候选）；<br>
  * 浮层关闭时 {@code ↑/↓} 在结果列表里移动选中行（自动滚到可见）、{@code Enter} 确认选中行
- * （等价于鼠标点它）；{@code Tab} 任何时候都是「补全第一个候选」的快捷方式。</p>
+ * （等价于鼠标点它）；{@code Tab} 在搜索框上是「补全第一个候选」的快捷方式。</p>
+ *
+ * <p>另外 {@link #keyPressed} 里还有一层 Enter 兜底：万一焦点两个控件都不认
+ * （原版 {@code AbstractSelectionList} 根本没有 {@code keyPressed}，箭头是靠
+ * {@code Screen} 的焦点导航挪选中行的，Enter 则谁都不管），回车也照样确认。</p>
  *
  * <p>点某一行就请服务端给它打发光标记，关掉界面并在聊天栏里报出它的坐标——
  * 那条消息本身还能点：点主体把 {@code /tp} 填进聊天栏，点 {@code [直接传送]} 直接执行。</p>
@@ -631,6 +639,8 @@ public class ScanScreen extends Screen {
                 }
             } else {
                 // 浮层关闭：↑/↓ 在结果列表里走，Enter 确认选中行
+                // （焦点在列表上时是同名逻辑的另一份，见 ResultList#keyPressed ——
+                //  点滚动条或按 Tab 都会把焦点弄到那边去，那边也必须能确认）
                 switch (keyCode) {
                     case GLFW.GLFW_KEY_UP -> {
                         if (ScanScreen.this.resultList.moveSelection(-1)) {
@@ -705,6 +715,30 @@ public class ScanScreen extends Screen {
         minecraft.player.displayClientMessage(body.append(" ").append(direct), false);
     }
 
+    /**
+     * 正常派发之外，再给 Enter 加一层兜底。
+     *
+     * <p>按键先照原样派发给持有焦点的控件（{@code super.keyPressed}）：
+     * 搜索框、结果列表都能自己吃掉 {@code ↑/↓/Enter}，正常情况到不了这里。
+     * 万一两边都没接（例如焦点被 {@code clearFocus} 清掉），回车仍然确认列表选中行 ——
+     * 「高亮看得见、回车没人管」这种状态在新代码里不该再出现。</p>
+     *
+     * <p>浮层打开时不插手：那条 {@code Enter} 是「补全候选」，一定先被搜索框返回 true 吃掉。</p>
+     */
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (super.keyPressed(keyCode, scanCode, modifiers)) {
+            return true;
+        }
+        if ((keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER)
+                && this.completions.isEmpty()
+                && this.resultList != null
+                && this.resultList.confirmSelection()) {
+            return true;
+        }
+        return false;
+    }
+
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         // 浮层优先吃掉点击，别让它穿到下面的列表里（点击只认可见窗口内的行）
@@ -774,9 +808,33 @@ public class ScanScreen extends Screen {
         }
 
         void setEntries(List<EntityInfo> entries) {
+            // 重建前先记住「现在选的是哪一条」：能按身份找回同一行就选它，找不到就把下标
+            // 夹回合法范围（这样改搜索词/重扫之后回车仍然按得响）。
+            int oldIndex = this.selectedIndex >= 0 ? this.selectedIndex : this.children().indexOf(this.getSelected());
+            Row oldSelected = this.rowAt(oldIndex);
+
             this.clearEntries();
+            // 原版 clearEntries() 直接给 selected 字段赋值 null，绕过 setSelected，
+            // 所以这里必须自己把下标也清掉，否则会留下一个指向已废行的幽灵下标。
+            this.selectedIndex = -1;
             for (EntityInfo entry : entries) {
                 this.addEntry(new Row(entry));
+            }
+            if (this.getItemCount() == 0) {
+                return;
+            }
+            if (oldSelected != null) {
+                int restored = -1;
+                for (int i = 0; i < this.getItemCount(); i++) {
+                    if (sameEntry(oldSelected.entry, this.getEntry(i).entry)) {
+                        restored = i;
+                        break;
+                    }
+                }
+                if (restored < 0) {
+                    restored = Math.max(0, Math.min(oldIndex, this.getItemCount() - 1));
+                }
+                this.setSelected(this.getEntry(restored));
             }
         }
 
@@ -790,17 +848,34 @@ public class ScanScreen extends Screen {
             return this.getX() + this.width - 6;
         }
 
+        /**
+         * 原版选中的唯一入口：不管谁改了选中（我们自己、鼠标、原版焦点导航），
+         * 都把下标同步过来 —— 确认与高亮之后一律只认这份下标。
+         */
+        @Override
+        public void setSelected(Row row) {
+            this.selectedIndex = row == null ? -1 : this.children().indexOf(row);
+            super.setSelected(row);
+        }
+
+        /** 下标 → 行；越界/空表返回 null。 */
+        private Row rowAt(int index) {
+            return index >= 0 && index < this.getItemCount() ? this.getEntry(index) : null;
+        }
+
         /** 键盘移动选中行，并自动滚到可见；列表为空返回 false（让按键继续往下走）。 */
         boolean moveSelection(int delta) {
-            List<Row> rows = this.children();
-            if (rows.isEmpty()) {
+            int count = this.getItemCount();
+            if (count == 0) {
                 return false;
             }
-            int index = this.getSelected() == null ? -1 : rows.indexOf(this.getSelected());
+            int index = this.selectedIndex >= 0
+                    ? this.selectedIndex
+                    : this.children().indexOf(this.getSelected());
             int next = index < 0
-                    ? (delta > 0 ? 0 : rows.size() - 1)
-                    : Math.max(0, Math.min(rows.size() - 1, index + delta));
-            Row row = rows.get(next);
+                    ? (delta > 0 ? 0 : count - 1)
+                    : Math.max(0, Math.min(count - 1, index + delta));
+            Row row = this.getEntry(next);
             this.setSelected(row);
             this.ensureVisible(row);
             return true;
@@ -808,7 +883,15 @@ public class ScanScreen extends Screen {
 
         /** Enter：等价于鼠标点中选中的那一行（发光 + 坐标消息 + 关屏）；没选中返回 false。 */
         boolean confirmSelection() {
-            Row row = this.getSelected();
+            // 先认我们自己的下标；万一它对不上（外部把列表重建过），再退到原版的选中。
+            // 两边任意一个活着，回车就打得响 —— 这就是「高亮在、回车没反应」的根治点。
+            Row row = this.rowAt(this.selectedIndex);
+            if (row == null) {
+                row = this.getSelected();
+                if (row != null) {
+                    this.setSelected(row);
+                }
+            }
             if (row == null) {
                 return false;
             }
@@ -816,15 +899,86 @@ public class ScanScreen extends Screen {
             return true;
         }
 
+        /**
+         * 焦点在列表上时的键盘处理。
+         *
+         * <p>原版 {@code AbstractSelectionList} 没有 {@code keyPressed}：焦点在列表上时
+         * {@code ↑/↓} 是 {@code Screen} 的箭头焦点导航在挪选中行（所以高亮会动），而
+         * {@code Enter} 谁都不管 —— 这就是玩家报的「上下键选中了、回车确认不了」。</p>
+         */
+        @Override
+        public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+            // 浮层打开时列表本来拿不到焦点；真拿到了也只准动候选，绝不动列表选中行
+            if (!ScanScreen.this.completions.isEmpty()) {
+                switch (keyCode) {
+                    case GLFW.GLFW_KEY_UP -> {
+                        ScanScreen.this.moveCompletion(-1);
+                        return true;
+                    }
+                    case GLFW.GLFW_KEY_DOWN -> {
+                        ScanScreen.this.moveCompletion(1);
+                        return true;
+                    }
+                    case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> {
+                        ScanScreen.this.acceptHighlightedCompletion();
+                        return true;
+                    }
+                    default -> {
+                    }
+                }
+            }
+            switch (keyCode) {
+                case GLFW.GLFW_KEY_UP -> {
+                    if (this.moveSelection(-1)) {
+                        return true;
+                    }
+                }
+                case GLFW.GLFW_KEY_DOWN -> {
+                    if (this.moveSelection(1)) {
+                        return true;
+                    }
+                }
+                case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> {
+                    if (this.confirmSelection()) {
+                        return true;
+                    }
+                }
+                default -> {
+                }
+            }
+            return super.keyPressed(keyCode, scanCode, modifiers);
+        }
+
         @Override
         protected void renderSelection(GuiGraphics graphics, int top, int width, int height,
                                        int outerColor, int innerColor) {
-            // 用强调色块标出选中的那行 —— 比原版灰框明显得多，键盘操作才看得见
+            // 用强调色块标出选中的那行 —— 比原版灰框明显得多，键盘操作才看得见。
+            // 位置一律按我们自己的下标算：原版传进来的 top 是照它自己的 selected 算的，不用。
+            int index = this.selectedIndex;
+            if (index < 0 || index >= this.getItemCount()) {
+                return;
+            }
+            int rowTop = this.getRowTop(index);
             int left = this.getX() + (this.width - width) / 2;
             int right = this.getX() + (this.width + width) / 2;
-            graphics.fill(left, top - 2, right, top + height + 2, COLOR_ROW_SELECT_BORDER);
-            graphics.fill(left + 1, top - 1, right - 1, top + height + 1, COLOR_ROW_SELECT_BG);
+            graphics.fill(left, rowTop - 2, right, rowTop + height + 2, COLOR_ROW_SELECT_BORDER);
+            graphics.fill(left + 1, rowTop - 1, right - 1, rowTop + height + 1, COLOR_ROW_SELECT_BG);
         }
+
+        /**
+         * 两条记录算不算「同一条」：置顶的认 UUID（它跨维度也会被重扫出来）；
+         * 其余认「注册 id + 显示名」。只用来在列表重建后把选中行挪到对应位置，
+         * 对不上就退化为「保留下标」，所以不要求绝对唯一。
+         */
+        private static boolean sameEntry(EntityInfo a, EntityInfo b) {
+            if (a.uuid() != null || b.uuid() != null) {
+                return a.uuid() != null && a.uuid().equals(b.uuid());
+            }
+            return a.typeId().equals(b.typeId()) && a.name().equals(b.name());
+        }
+
+        /** 当前选中行的下标（-1 = 没选中）；高亮、确认都只认它。 */
+        private int selectedIndex = -1;
     }
 
     /**
@@ -851,8 +1005,9 @@ public class ScanScreen extends Screen {
         @Override
         public void render(GuiGraphics graphics, int index, int top, int left, int width, int height,
                            int mouseX, int mouseY, boolean hovered, float partialTick) {
-            // 键盘/鼠标选中的那一行也换个亮色文字，跟底色块配合；置顶条目平时走金色
-            boolean selected = ScanScreen.this.resultList.getSelected() == this;
+            // 键盘/鼠标选中的那一行也换个亮色文字，跟底色块配合；置顶条目平时走金色。
+            // 认列表自己的下标，跟 renderSelection 画的那块底板同一个来源，不会两处打架。
+            boolean selected = index == ScanScreen.this.resultList.selectedIndex;
             int nameColor = selected ? COLOR_TEXT_SELECTED
                     : (hovered ? COLOR_TEXT_HOVER : (this.entry.isPinned() ? COLOR_PINNED : COLOR_TEXT));
             int textLeft = left + 4;
